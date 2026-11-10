@@ -1,0 +1,137 @@
+/* voxemo — printed-paper look. Everything is local: fonts live in src/assets/fonts. */
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("./assets/fonts/fraunces-latin-full-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fraunces";
+  src: url("./assets/fonts/fraunces-latin-full-italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --paper: #f3ede2;
+  --paper-deep: #ebe3d4;
+  --ink: #1c1a17;
+  --ink-2: #4f4a42;      /* secondary text, 7.6:1 on paper */
+  --ink-3: #6b655b;      /* captions, 5.0:1 on paper */
+  --rule: #1c1a1733;
+  --grain-opacity: 0.09;
+
+  /* One muted, natural hue per estimated emotion (validated for colour-vision
+     deficiencies; never the only cue: shape, label and pattern carry it too). */
+  --emo-neutre: #008670;
+  --emo-joie: #c28d1c;
+  --emo-tristesse: #4d5fae;
+  --emo-stress: #a23a28;
+  --accent: var(--emo-neutre);
+
+  --serif: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --measure: 34rem;
+  --gutter: clamp(16px, 4vw, 56px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #15171c;
+    --paper-deep: #1b1e24;
+    --ink: #ece6da;
+    --ink-2: #bdb6a8;
+    --ink-3: #9c9588;
+    --rule: #ece6da2e;
+    --grain-opacity: 0.07;
+    --emo-neutre: #2a9882;
+    --emo-joie: #aa8a1a;
+    --emo-tristesse: #7480d0;
+    --emo-stress: #c94a4e;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #15171c;
+  --paper-deep: #1b1e24;
+  --ink: #ece6da;
+  --ink-2: #bdb6a8;
+  --ink-3: #9c9588;
+  --rule: #ece6da2e;
+  --grain-opacity: 0.07;
+  --emo-neutre: #2a9882;
+  --emo-joie: #aa8a1a;
+  --emo-tristesse: #7480d0;
+  --emo-stress: #c94a4e;
+}
+
+:root[data-emotion="joie"] { --accent: var(--emo-joie); }
+:root[data-emotion="tristesse"] { --accent: var(--emo-tristesse); }
+:root[data-emotion="stress"] { --accent: var(--emo-stress); }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.5;
+  font-variation-settings: "opsz" 14, "SOFT" 50, "WONK" 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Paper grain: an inline SVG noise, no image request. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) body::before { mix-blend-mode: screen; filter: invert(1); }
+}
+:root[data-theme="dark"] body::before { mix-blend-mode: screen; filter: invert(1); }
+
+.mono { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.02em; }
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+button { font: inherit; color: inherit; }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

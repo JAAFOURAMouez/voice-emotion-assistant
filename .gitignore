@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environnements
+.venv/
+venv/
+.env
+
+# Outils
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Données locales : historique, audio, voix et modèles téléchargés
+data/
+*.db
+*.sqlite3
+*.wav
+*.onnx
+*.onnx.json
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Captures d'écran de vérification
+captures/
+
+# Frontend (web/)
+node_modules/
+.vite/
+*.tsbuildinfo
+
+# Divers
+*.log
+*:Zone.Identifier
+test-results/
+playwright-report/

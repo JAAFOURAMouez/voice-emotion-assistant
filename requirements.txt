@@ -1,0 +1,42 @@
+# Assistant vocal sensible aux émotions — stack 100 % gratuite et locale
+# Python 3.11+ recommandé. Installation : pip install -r requirements.txt
+# (développement : pip install -r requirements-dev.txt)
+# Ollama lui-même s'installe à part (https://ollama.com), puis : ollama pull llama3.2
+
+# --- LLM local (client Python pour le serveur Ollama) ---
+ollama>=0.6.3
+httpx>=0.28.1        # transport HTTP d'Ollama (erreurs réseau en streaming)
+
+# --- Capture et traitement audio ---
+sounddevice>=0.5.6   # optionnel : micro et haut-parleur des outils en ligne de commande
+                     # (PortAudio) ; l'interface web capte le micro dans le navigateur
+soundfile>=0.14.0    # lecture / écriture WAV
+numpy>=2.5.4
+soxr>=1.1.0          # rééchantillonnage rapide des fichiers audio
+silero-vad>=6.2.3    # détection de parole (début / fin de prise de parole)
+
+# --- Transcription (speech-to-text) ---
+faster-whisper>=1.2.1 # Whisper optimisé CPU/GPU, multilingue (français inclus)
+
+# --- Analyse des émotions dans la voix ---
+scipy>=1.18.1        # détection des pics d'énergie (débit syllabique)
+librosa>=1.0.0       # caractéristiques prosodiques : pitch, énergie, débit, pauses
+torch>=2.15.0
+torchaudio>=2.11.1
+transformers>=5.22.2 # modèle de reconnaissance d'émotion (wav2vec2)
+
+# --- Synthèse vocale (text-to-speech) ---
+piper-tts>=1.8.0     # TTS neuronal local, voix françaises disponibles
+
+# --- Serveur de l'interface web (le frontend est dans web/, Vite + Svelte) ---
+fastapi>=0.162.2     # API REST + WebSocket
+uvicorn>=0.54.0      # serveur ASGI
+websockets>=17.4     # WebSocket pour uvicorn
+
+# --- Configuration ---
+pydantic>=2.14.3
+pydantic-settings>=2.16.2
+python-dotenv>=1.2.4
+
+# --- Ce paquet (src/voxemo), en mode éditable ---
+-e .

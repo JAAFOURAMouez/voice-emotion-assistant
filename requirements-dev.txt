@@ -1,0 +1,5 @@
+# Outils de développement (tests, lint, captures d'écran du frontend)
+-r requirements.txt
+pytest>=9.2.0
+ruff>=0.17.4
+playwright>=1.65.0   # navigateur headless pour vérifier l'interface (playwright install chromium)
