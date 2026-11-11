@@ -30,6 +30,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from voxemo import texts
 from voxemo.api.payloads import estimate_payload, exercise_payload, offer_payload
 from voxemo.api.services import Services
+from voxemo.llm.selection import privacy_notice
 from voxemo.pipeline import HistoryRecorder, TurnAnalysis, TurnResult, VoicePipeline
 from voxemo.tts.speaker import split_sentences
 
@@ -110,11 +111,14 @@ class ConversationSession:
         elif holder.state == "error":
             message = holder.error
         llm_problem = await asyncio.to_thread(services.llm_problem) if services else None
+        llm_state = services.llm_state() if services else {}
         await self.send(
             "status",
             state=holder.state,
             message=message,
-            llm={"ok": services is not None and llm_problem is None, "message": llm_problem},
+            llm={"ok": services is not None and llm_problem is None, "message": llm_problem}
+            | llm_state,
+            notice=privacy_notice(services.selector if services else None),
             voice=bool(services and services.speaker is not None),
             warnings=list(dict.fromkeys(services.warnings)) if services else [],
         )

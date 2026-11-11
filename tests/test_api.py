@@ -99,7 +99,8 @@ def test_status_reports_ready_and_local(tmp_path: Path, settings: Settings) -> N
     with client:
         body = client.get("/api/status").json()
     assert body["state"] == "ready"
-    assert body["llm"] == {"ok": True, "message": None}
+    assert body["llm"]["ok"] is True and body["llm"]["message"] is None
+    assert body["llm"]["local"] is True
     assert body["local_only"] is True and "cette machine" in body["notice"]
     assert body["sample_rate"] == 16_000
 
@@ -111,10 +112,8 @@ def test_status_shows_llm_problem(tmp_path: Path, settings: Settings) -> None:
 
     client, _ = _client(tmp_path, settings, model=Down())
     with client:
-        assert client.get("/api/status").json()["llm"] == {
-            "ok": False,
-            "message": "Impossible de joindre Ollama",
-        }
+        llm = client.get("/api/status").json()["llm"]
+        assert llm["ok"] is False and llm["message"] == "Impossible de joindre Ollama"
 
 
 def test_no_external_docs_page(tmp_path: Path, settings: Settings) -> None:
@@ -347,14 +346,11 @@ def test_models_loading_then_ready(tmp_path: Path, settings: Settings) -> None:
             error = ws.receive_json()
             assert error["code"] == "loading" and "Chargement" in error["message"]
             release.set()
-            assert ws.receive_json() == {
-                "type": "status",
-                "state": "ready",
-                "message": None,
-                "llm": {"ok": True, "message": None},
-                "voice": False,
-                "warnings": [],
-            }
+            ready = ws.receive_json()
+            assert ready["type"] == "status" and ready["state"] == "ready"
+            assert ready["message"] is None and ready["warnings"] == []
+            assert ready["llm"]["ok"] is True and ready["llm"]["local"] is True
+            assert "cette machine" in ready["notice"]
 
 
 def test_loading_failure_is_shown(tmp_path: Path, settings: Settings) -> None:
@@ -405,3 +401,135 @@ def test_turn_completes_even_if_history_cannot_be_saved(tmp_path: Path, settings
         ws.receive_json()
         events, _ = _voice_turn(ws)
     assert _types(events)[-2:] == ["reply_end", "done"]
+
+
+def test_history_can_be_limited_to_recent_days(tmp_path: Path, settings: Settings) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    client, services = _client(tmp_path, settings)
+    session = services.store.start_session()
+    for days_ago, text in [(10, "ancien"), (1, "récent")]:
+        services.store.add_interaction(
+            session,
+            transcript=text,
+            reply="",
+            estimate=make_estimate(),
+            timestamp=datetime.now(UTC) - timedelta(days=days_ago),
+        )
+    with client:
+        recent = client.get("/api/history", params={"days": 7}).json()["interactions"]
+        everything = client.get("/api/history").json()["interactions"]
+        assert client.get("/api/history", params={"days": 0}).status_code == 422
+    assert [i["transcript"] for i in recent] == ["récent"]
+    assert len(everything) == 2
+
+
+# --- access code, CORS, model choice ---
+
+TOKEN = "code-acces-0123456789"
+
+
+def test_access_code_protects_rest_routes(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, web_dist=tmp_path / "no-dist", access_token=TOKEN)
+    client, _ = _client(tmp_path, settings)
+    with client:
+        assert client.get("/api/status").status_code == 401
+        wrong = client.get("/api/history", headers={"Authorization": "Bearer faux"})
+        assert wrong.status_code == 401
+        assert client.delete("/api/history").status_code == 401
+        ok = client.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})
+        assert ok.status_code == 200
+
+
+def test_access_code_protects_the_websocket(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, web_dist=tmp_path / "no-dist", access_token=TOKEN)
+    client, _ = _client(tmp_path, settings)
+    with client:
+        with client.websocket_connect("/api/turn", subprotocols=["voxemo", "token.faux"]) as ws:
+            with pytest.raises(WebSocketDisconnect) as info:
+                ws.receive_json()
+            assert info.value.code == 4401
+        with client.websocket_connect("/api/turn", subprotocols=["voxemo", f"token.{TOKEN}"]) as ws:
+            assert ws.accepted_subprotocol == "voxemo"  # the code is never echoed
+            assert ws.receive_json()["type"] == "status"
+
+
+def test_no_code_configured_keeps_the_local_behaviour(tmp_path: Path, settings: Settings) -> None:
+    client, _ = _client(tmp_path, settings)
+    with client, client.websocket_connect("/api/turn", subprotocols=["voxemo"]) as ws:
+        assert ws.receive_json()["type"] == "status"
+
+
+def test_cors_allows_only_the_declared_static_site(tmp_path: Path) -> None:
+    site = "https://voxemo.onrender.com"
+    settings = Settings(
+        _env_file=None, web_dist=tmp_path / "no-dist", allowed_origins=site, access_token=TOKEN
+    )
+    client, _ = _client(tmp_path, settings)
+    with client:
+        preflight = client.options(
+            "/api/history",
+            headers={
+                "Origin": site,
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == site
+        denied = client.get("/api/status", headers={"Origin": site})
+        assert denied.status_code == 401  # still readable by the page: it asks for the code
+        assert denied.headers["access-control-allow-origin"] == site
+        other = client.options(
+            "/api/history",
+            headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
+        )
+        assert "access-control-allow-origin" not in other.headers
+        with client.websocket_connect(
+            "/api/turn", subprotocols=["voxemo", f"token.{TOKEN}"], headers={"origin": site}
+        ) as ws:
+            assert ws.receive_json()["type"] == "status"
+
+
+def _selector_client(tmp_path: Path, settings: Settings):
+    from voxemo.llm.client import LocalModel
+    from voxemo.llm.selection import LlmConfigStore, LlmSelector
+
+    s = settings.model_copy(update={"llm_config_path": tmp_path / "llm.json"})
+    selector = LlmSelector(
+        s,
+        LlmConfigStore(s.llm_config_path),
+        ollama_factory=lambda model: FakeChatModel(f"Ollama {model} répond."),
+        remote_factory=lambda provider, model, key, url: FakeChatModel(f"{provider} répond."),
+        lister=lambda: [LocalModel("llama3.2", 2.0, "3.2B", False)],
+    )
+    return _client(tmp_path, s, model=selector)
+
+
+def test_choose_a_provider_then_talk(tmp_path: Path, settings: Settings) -> None:
+    client, _ = _selector_client(tmp_path, settings)
+    key = "sk-secret-abcdefghijkl"
+    with client:
+        described = client.get("/api/llm").json()
+        assert described["current"]["model"] == "llama3.2"
+        assert described["ollama_models"][0]["name"] == "llama3.2"
+
+        bad = client.put("/api/llm", json={"provider": "openai", "model": "gpt-x"})
+        assert bad.status_code == 400 and "Aucune clé" in bad.json()["detail"]
+
+        chosen = client.put(
+            "/api/llm", json={"provider": "openai", "model": "gpt-x", "api_key": key}
+        )
+        assert chosen.status_code == 200 and key not in chosen.text
+        status = client.get("/api/status").json()
+        assert status["local_only"] is False and "OpenAI" in status["notice"]
+
+        with client.websocket_connect("/api/turn") as ws:
+            assert ws.receive_json()["llm"]["provider_name"] == "OpenAI"
+            ws.send_json({"type": "text", "text": "Bonjour"})
+            events, _ = _receive_until_done(ws)
+        reply = next(e for e in events if e["type"] == "reply_end")
+        assert reply["text"].startswith("openai répond")
+
+        back = client.delete("/api/llm/keys/openai").json()
+        assert back["current"]["provider"] == "ollama"

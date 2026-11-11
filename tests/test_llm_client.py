@@ -2,6 +2,7 @@
 
 import io
 from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -19,10 +20,19 @@ from voxemo.llm.prompts import ChatMessage
 
 
 class _StubClient:
-    def __init__(self, chunks: list[Any] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        chunks: list[Any] | None = None,
+        error: Exception | None = None,
+        capabilities: list[str] | None = None,
+    ) -> None:
         self.chunks = chunks or []
         self.error = error
+        self.capabilities = capabilities or ["completion"]
         self.kwargs: dict[str, Any] = {}
+
+    def show(self, model: str) -> Any:
+        return SimpleNamespace(capabilities=self.capabilities)
 
     def chat(self, **kwargs: Any) -> Iterator[Any]:
         self.kwargs = kwargs
@@ -50,6 +60,13 @@ def test_ollama_streams_content_and_sends_messages() -> None:
     assert stub.kwargs["stream"] is True
     assert stub.kwargs["messages"] == [{"role": "user", "content": "Salut"}]
     assert stub.kwargs["options"] == {"temperature": 0.2}
+    assert stub.kwargs["think"] is None  # not a reasoning model: Ollama's default
+
+
+def test_reasoning_models_do_not_think_before_a_voice_reply() -> None:
+    stub = _StubClient([_chunk("Oui")], capabilities=["completion", "thinking"])
+    assert list(_model_with(stub).stream_chat([ChatMessage("user", "Salut")])) == ["Oui"]
+    assert stub.kwargs["think"] is False
 
 
 @pytest.mark.parametrize(
@@ -209,6 +226,7 @@ def test_warm_up_preprocesses_messages_with_one_token() -> None:
             "model": "llama3.2",
             "messages": [{"role": "system", "content": "Tu es un assistant."}],
             "stream": False,
+            "think": None,
             "options": {"temperature": 0.2, "num_predict": 1},
         }
     ]
@@ -227,3 +245,33 @@ def test_warm_up_maps_errors() -> None:
     stub.chat = refuse  # type: ignore[method-assign]
     with pytest.raises(LLMUnavailableError, match="Impossible de joindre Ollama"):
         _model_with(stub).warm_up()
+
+
+def test_local_model_list_leaves_out_embedding_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    from voxemo.llm import client as client_module
+
+    class Lister:
+        def __init__(self, **_kw: Any) -> None: ...
+
+        def list(self) -> ollama.ListResponse:
+            return ollama.ListResponse(
+                models=[
+                    ollama.ListResponse.Model(model="qwen3:8b", size=5_200_000_000),
+                    ollama.ListResponse.Model(model="llama3.2:latest", size=2_000_000_000),
+                    ollama.ListResponse.Model(model="nomic-embed-text:latest", size=1),
+                ]
+            )
+
+        def show(self, model: str) -> SimpleNamespace:
+            caps = {
+                "qwen3:8b": ["completion", "thinking"],
+                "nomic-embed-text:latest": ["embedding"],
+            }
+            return SimpleNamespace(capabilities=caps.get(model, ["completion"]))
+
+    monkeypatch.setattr(client_module.ollama, "Client", Lister)
+    models = client_module.list_local_models("http://localhost:11434")
+    assert [(m.name, m.thinking, m.size_gb) for m in models] == [
+        ("llama3.2", False, 2.0),
+        ("qwen3:8b", True, 5.2),
+    ]

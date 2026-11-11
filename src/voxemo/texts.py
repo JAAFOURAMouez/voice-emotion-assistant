@@ -12,6 +12,26 @@ OLLAMA_MODEL_MISSING = (
 OLLAMA_TIMEOUT = "Ollama met trop de temps à répondre (plus de {timeout:.0f} s)."
 OLLAMA_ERROR = "Ollama a renvoyé une erreur : {detail}"
 
+# --- Other chat models (opt-in, the user's own key) ---
+LLM_KEY_MISSING = "Aucune clé d'API enregistrée pour {provider}."
+LLM_KEY_REJECTED = "{provider} refuse la clé d'API. Vérifiez-la dans les réglages du modèle."
+LLM_MODEL_UNKNOWN = "{provider} ne connaît pas le modèle « {model} »."
+LLM_QUOTA = "{provider} refuse la demande : quota ou crédit épuisé, ou trop de requêtes."
+LLM_PROVIDER_ERROR = "{provider} a renvoyé une erreur ({code})."
+LLM_PROVIDER_TIMEOUT = "{provider} met trop de temps à répondre (plus de {timeout:.0f} s)."
+LLM_PROVIDER_UNREACHABLE = "Impossible de joindre {provider}. Vérifiez la connexion Internet."
+LLM_BAD_URL = "Adresse du fournisseur invalide : une URL http(s) complète est attendue."
+LLM_HTTP_URL = (
+    "Adresse refusée : la clé d'API circulerait en clair. Utilisez https "
+    "(http n'est accepté que vers cette machine)."
+)
+LLM_BAD_KEY = "Clé d'API invalide."
+LLM_BAD_MODEL = "Nom de modèle invalide."
+LLM_UNKNOWN_PROVIDER = "Fournisseur inconnu."
+LLM_CLOUD_DISABLED = (
+    "Les fournisseurs externes sont désactivés sur ce serveur (ALLOW_CLOUD_LLM=false)."
+)
+
 # --- Safety ---
 SAFETY_FALLBACK = (
     "Ce que vous traversez semble très lourd, et vous n'avez pas à le porter seul. "
@@ -135,6 +155,11 @@ UI_PRIVACY = (
     "Tout reste sur cette machine : l'audio n'est pas conservé, seuls la transcription, "
     "la réponse et les scores estimés sont enregistrés localement."
 )
+UI_PRIVACY_CLOUD = (
+    "Le texte de vos échanges est envoyé à {provider}, avec l'indice d'émotion estimée. "
+    "L'audio reste sur cette machine ; l'historique aussi."
+)
+API_ACCESS_REQUIRED = "Code d'accès requis ou incorrect."
 
 # --- Web API ---
 API_LOADING = "Chargement des modèles en cours, un instant…"

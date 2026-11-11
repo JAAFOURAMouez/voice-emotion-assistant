@@ -1,6 +1,9 @@
+import { socketProtocols, socketUrl } from "./server";
 import type { ServerMessage } from "./types";
 
-export type Connection = "connecting" | "open" | "closed";
+/** "denied": wrong or missing access code (no automatic retry). */
+export type Connection = "connecting" | "open" | "closed" | "denied";
+const ACCESS_DENIED = 4401;
 
 /**
  * The conversation WebSocket, reconnected automatically. Binary frames are the
@@ -10,18 +13,24 @@ export class TurnSocket {
   private ws: WebSocket | null = null;
   private retry = 0;
   private closedByUser = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly onMessage: (message: ServerMessage) => void,
     private readonly onAudio: (wav: ArrayBuffer) => void,
     private readonly onConnection: (state: Connection) => void,
-    private readonly url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/turn`,
   ) {}
 
   connect(): void {
     this.closedByUser = false;
     this.onConnection("connecting");
-    const ws = new WebSocket(this.url);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(socketUrl(), socketProtocols());
+    } catch {
+      this.onConnection("closed"); // malformed address
+      return;
+    }
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       this.retry = 0;
@@ -31,12 +40,17 @@ export class TurnSocket {
       if (typeof event.data === "string") this.onMessage(JSON.parse(event.data) as ServerMessage);
       else this.onAudio(event.data);
     };
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
+      if (this.ws !== ws) return; // an older socket, replaced by restart()
       this.ws = null;
+      if (event.code === ACCESS_DENIED) {
+        this.onConnection("denied");
+        return;
+      }
       this.onConnection("closed");
       if (!this.closedByUser) {
         const delay = Math.min(10_000, 500 * 2 ** this.retry++);
-        setTimeout(() => this.connect(), delay);
+        this.timer = setTimeout(() => this.connect(), delay);
       }
     };
     this.ws = ws;
@@ -56,6 +70,16 @@ export class TurnSocket {
 
   close(): void {
     this.closedByUser = true;
-    this.ws?.close();
+    clearTimeout(this.timer);
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close();
+  }
+
+  /** New address or access code: reconnect now. */
+  restart(): void {
+    this.close();
+    this.retry = 0;
+    this.connect();
   }
 }

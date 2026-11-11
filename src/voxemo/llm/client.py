@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
@@ -32,8 +33,60 @@ class ChatModel(Protocol):
     def stream_chat(self, messages: Sequence[ChatMessage]) -> Iterator[str]: ...
 
 
+@dataclass(frozen=True)
+class LocalModel:
+    """A chat model installed in Ollama."""
+
+    name: str
+    size_gb: float
+    parameters: str
+    thinking: bool
+    """Reasoning model: its "thinking" is switched off to keep replies fast."""
+
+
+def list_local_models(host: str, timeout_s: float = 3.0) -> list[LocalModel]:
+    """Chat models installed in Ollama (embedding-only models left out).
+
+    Raises :class:`LLMUnavailableError` when Ollama cannot be reached.
+    """
+    client = ollama.Client(host=host, timeout=timeout_s)
+    try:
+        listing = client.list()
+    except (httpx.HTTPError, ConnectionError, ollama.ResponseError) as exc:
+        raise LLMUnavailableError(texts.OLLAMA_UNREACHABLE.format(host=host)) from exc
+    models = []
+    for entry in listing.models:
+        if not entry.model:
+            continue
+        capabilities = _capabilities(client, entry.model)
+        if capabilities is None:  # older Ollama: guess from the name
+            capabilities = {"embedding"} if "embed" in entry.model else {"completion"}
+        if "completion" not in capabilities:
+            continue
+        details = entry.details
+        models.append(
+            LocalModel(
+                name=entry.model.removesuffix(":latest"),
+                size_gb=round((entry.size or 0) / 1e9, 1),
+                parameters=(details.parameter_size or "") if details else "",
+                thinking="thinking" in capabilities,
+            )
+        )
+    return sorted(models, key=lambda m: m.name)
+
+
+def _capabilities(client: ollama.Client, model: str) -> set[str] | None:
+    try:
+        found = client.show(model).capabilities
+    except (httpx.HTTPError, ConnectionError, ollama.ResponseError):
+        return None
+    return set(found) if found else None
+
+
 class OllamaChatModel:
     """`ChatModel` backed by a local Ollama server. The HTTP client is created lazily."""
+
+    local = True
 
     def __init__(
         self,
@@ -49,6 +102,7 @@ class OllamaChatModel:
         self.options = dict(options or {})
         self._client: ollama.Client | None = None
         self._warm_client: ollama.Client | None = None
+        self._think: bool | str | None = "unknown"
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OllamaChatModel:
@@ -81,11 +135,23 @@ class OllamaChatModel:
         except (httpx.TransportError, ConnectionError) as exc:
             raise LLMUnavailableError(texts.OLLAMA_UNREACHABLE.format(host=self.host)) from exc
 
+    def _think_option(self) -> bool | None:
+        """``False`` for reasoning models (qwen3, deepseek-r1…): a voice reply cannot
+        wait for a long hidden reasoning. ``None`` (Ollama's default) otherwise."""
+        if self._think == "unknown":
+            capabilities = _capabilities(self.client, self.model) or set()
+            self._think = False if "thinking" in capabilities else None
+        return self._think  # type: ignore[return-value]
+
     def stream_chat(self, messages: Sequence[ChatMessage]) -> Iterator[str]:
         payload = [{"role": m.role, "content": m.content} for m in messages]
         with self._user_facing_errors():
             for chunk in self.client.chat(
-                model=self.model, messages=payload, stream=True, options=self.options
+                model=self.model,
+                messages=payload,
+                stream=True,
+                options=self.options,
+                think=self._think_option(),
             ):
                 if content := chunk.message.content:
                     yield content
@@ -121,6 +187,7 @@ class OllamaChatModel:
                 model=self.model,
                 messages=payload,
                 stream=False,
+                think=self._think_option(),
                 options={**self.options, "num_predict": 1},
             )
 

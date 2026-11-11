@@ -1,0 +1,33 @@
+# Render Blueprint: only the interface (a free static site) is hosted on Render.
+# The server (models, Ollama, history) keeps running on your own computer and is
+# reached through an HTTPS tunnel (Tailscale Funnel or Cloudflare Tunnel): see README.
+services:
+  - type: web
+    runtime: static
+    name: voxemo
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # No API at the site's own address: the page asks for your computer's address.
+      - key: VITE_STANDALONE
+        value: "true"
+      # Optional: your tunnel address, pre-filled for every visitor (e.g.
+      # https://mon-pc.mon-reseau.ts.net). Can also be typed in the page.
+      - key: VITE_API_URL
+        sync: false
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https: wss:; worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      - path: /*
+        name: Permissions-Policy
+        value: "microphone=(self), camera=(), geolocation=()"
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff

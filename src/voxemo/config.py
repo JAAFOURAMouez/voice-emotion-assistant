@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -11,6 +12,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{16,256}")
 
 
 class Settings(BaseSettings):
@@ -37,6 +39,11 @@ class Settings(BaseSettings):
     """Number of past exchanges (user + assistant) sent back to the model."""
     allow_remote_ollama: bool = False
     """Opt-in escape hatch: by default Ollama must run on this machine."""
+    allow_cloud_llm: bool = True
+    """Let the user pick an external provider with their own key in the interface
+    (never the default: the text of the conversation then leaves the machine)."""
+    llm_config_path: Path = Path("data/llm.json")
+    """Model chosen in the interface and the user's API keys (owner-only file)."""
 
     # --- Language ---
     language: str = Field(default="fr", min_length=2, max_length=5)
@@ -102,6 +109,9 @@ class Settings(BaseSettings):
     """Extra browser origins allowed to open the WebSocket, comma-separated
     (e.g. https://voxemo.example.org behind a reverse proxy). Same-origin and
     localhost pages are always allowed."""
+    access_token: str = ""
+    """When set, every /api call must present it (the page asks for it once). Required
+    as soon as the server is reachable from outside (tunnel, reverse proxy)."""
     web_dist: Path = Path("web/dist")
     """Built frontend served at / (``npm run build`` in web/)."""
 
@@ -115,6 +125,21 @@ class Settings(BaseSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError(f"OLLAMA_HOST must be an http(s) URL, got {value!r}")
         return value.rstrip("/")
+
+    @field_validator("access_token")
+    @classmethod
+    def _check_token(cls, value: str) -> str:
+        value = value.strip()
+        if value and not _TOKEN.fullmatch(value):
+            raise ValueError(
+                "ACCESS_TOKEN: at least 16 characters among letters, digits, '-' and '_' "
+                '(e.g. python -c "import secrets; print(secrets.token_urlsafe(24))")'
+            )
+        return value
+
+    @property
+    def allowed_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.allowed_origins.split(",") if o.strip()]
 
     @field_validator("language")
     @classmethod

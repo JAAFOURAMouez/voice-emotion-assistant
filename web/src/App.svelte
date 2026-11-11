@@ -4,8 +4,13 @@
   import { SpeechPlayer } from "./lib/audio/player";
   import { applyMessage, type Turn } from "./lib/conversation";
   import Dialogue from "./lib/Dialogue.svelte";
+  import Strata from "./lib/Strata.svelte";
+  import { clearHistory, fetchHistory, type History } from "./lib/api/history";
   import TypedInput from "./lib/TypedInput.svelte";
   import { TurnSocket, type Connection } from "./lib/api/socket";
+  import type { CurrentModel } from "./lib/api/llm";
+  import { AccessDenied, configure, needsAddress, standalone } from "./lib/api/server";
+  import SettingsPanel from "./lib/SettingsPanel.svelte";
   import type { EmotionLabel, Estimate, Exercise, LlmState, ServerMessage } from "./lib/api/types";
   import { cueText } from "./lib/emotions";
   import PushToTalk from "./lib/PushToTalk.svelte";
@@ -27,6 +32,44 @@
   let speaking = $state(false);
   let exercise = $state<Exercise | null>(null);
   let turnId = 0;
+  let history = $state<History>({ simulated: false, notice: null, interactions: [], trend: [] });
+  let historyCleared = false;
+  let settingsOpen = $state(false);
+  let settingsReason = $state<string | null>(null);
+
+  /** The real week; when it is empty (first visit), a clearly marked simulated one. */
+  async function loadHistory(): Promise<void> {
+    try {
+      const real = await fetchHistory({ days: 7 });
+      history = real.interactions.length || historyCleared ? real : await fetchHistory({ demo: true });
+    } catch (e) {
+      if (e instanceof AccessDenied) askForAccess();
+      /* otherwise the server is still loading: retried on the next status */
+    }
+  }
+
+  async function eraseHistory(): Promise<void> {
+    await clearHistory();
+    historyCleared = true;
+    notice = T.cleared;
+    await loadHistory();
+  }
+
+  function askForAccess(): void {
+    settingsReason = T.accessDenied;
+    settingsOpen = true;
+  }
+
+  function connectTo(address: string, code: string): void {
+    configure(address, code);
+    settingsReason = null;
+    serverState = "loading";
+    socket.restart();
+  }
+
+  function modelChanged(current: CurrentModel): void {
+    llm = { ...llm, ...current, ok: true, message: null };
+  }
 
   const mic = new Microphone((state) => (micState = state));
   const player = new SpeechPlayer((playing) => (speaking = playing));
@@ -42,8 +85,12 @@
 
   // Highest-priority state first: what keeps the user from talking right now.
   const blocking: string | null = $derived(
-    connection === "closed"
-      ? T.offline
+    connection === "denied"
+      ? T.accessDenied
+      : connection === "closed"
+      ? standalone
+        ? T.offlineRemote
+        : T.offline
       : serverState === "loading"
         ? (serverMessage ?? T.loading)
         : serverState === "error"
@@ -69,6 +116,7 @@
     turns = applyMessage(turns, message, () => ++turnId);
     switch (message.type) {
       case "status":
+        if (message.state === "ready" && serverState !== "ready") void loadHistory();
         serverState = message.state;
         serverMessage = message.message;
         llm = message.llm;
@@ -94,6 +142,7 @@
         break;
       case "done":
         phase = "idle";
+        void loadHistory(); // the turn has deposited a new stratum
         break;
     }
   }
@@ -141,9 +190,22 @@
     socket.send({ type: "reset" });
   }
 
+  const privacy = $derived(
+    llm.local === false
+      ? `○ ${T.cloudNotice.replace("{provider}", llm.provider_name ?? "")}`
+      : `● ${standalone ? T.localRemote : T.local}`,
+  );
+
   onMount(() => {
-    socket = new TurnSocket(handle, (wav) => player.enqueue(wav), (state) => (connection = state));
-    socket.connect();
+    socket = new TurnSocket(handle, (wav) => player.enqueue(wav), (state) => {
+      connection = state;
+      if (state === "denied") askForAccess();
+    });
+    if (needsAddress()) {
+      settingsReason = T.serverNeeded;
+      settingsOpen = true;
+      connection = "closed";
+    } else socket.connect();
     return () => socket.close();
   });
 </script>
@@ -151,10 +213,15 @@
 <div class="page" data-phase={phase}>
   <header class="masthead">
     <p class="wordmark"><span>{T.wordmark}</span> <em>{T.tagline}</em></p>
-    <p class="mono local">● {T.local}</p>
-    {#if turns.length}
-      <button type="button" class="mono reset" onclick={newConversation}>{T.newConversation}</button>
-    {/if}
+    <p class="mono local" class:cloud={llm.local === false}>{privacy}</p>
+    <p class="mast-actions">
+      <button type="button" class="mono reset" aria-haspopup="dialog" onclick={() => ((settingsReason = null), (settingsOpen = true))}>
+        {llm.model ? T.modelLink.replace("{model}", llm.model) : T.settings}
+      </button>
+      {#if turns.length}
+        <button type="button" class="mono reset" onclick={newConversation}>{T.newConversation}</button>
+      {/if}
+    </p>
   </header>
 
   <section class="stage" aria-label="Empreinte vocale">
@@ -187,6 +254,18 @@
     {/if}
   </aside>
 
+  <aside class="layers">
+    <Strata items={history.interactions} trend={history.trend} simulated={history.simulated} notice={history.notice} onclear={eraseHistory} />
+  </aside>
+
+  <SettingsPanel
+    bind:open={settingsOpen}
+    reason={settingsReason}
+    connected={connection === "open" && serverState === "ready"}
+    onserver={connectTo}
+    onmodel={modelChanged}
+  />
+
   <footer class="controls">
     <PushToTalk recording={phase === "recording"} disabled={!canTalk || phase === "processing" || phase === "replying"} onstart={startTalking} onstop={stopTalking} />
     <TypedInput disabled={connection !== "open" || serverState !== "ready" || phase === "processing" || phase === "replying"} onsend={sendText} />
@@ -197,13 +276,13 @@
   .page {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: minmax(16rem, 30rem) 1fr;
+    grid-template-columns: minmax(16rem, 30rem) 1fr minmax(11rem, 14rem);
     grid-template-rows: auto minmax(0, 1fr) auto;
     height: 100vh;
     grid-template-areas:
-      "mast stage"
-      "text stage"
-      "ctrl stage";
+      "mast stage layers"
+      "text stage layers"
+      "ctrl stage layers";
     column-gap: clamp(24px, 5vw, 96px);
     padding: var(--gutter);
   }
@@ -257,14 +336,26 @@
     font-size: 1.15rem;
     font-variation-settings: "opsz" 36;
   }
+  .layers {
+    grid-area: layers;
+    min-height: 0;
+  }
   .text {
     grid-area: text;
     min-height: 0;
     max-width: var(--measure);
     padding: 1.5rem 0 1.2rem;
   }
+  .local.cloud {
+    color: var(--ink);
+  }
+  .mast-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
+    margin: 0.6rem 0 0;
+  }
   .reset {
-    margin-top: 0.6rem;
     background: none;
     border: 0;
     padding: 0;
@@ -298,7 +389,7 @@
     .page {
       grid-template-columns: 1fr;
       grid-template-rows: auto auto auto auto;
-      grid-template-areas: "mast" "stage" "text" "ctrl";
+      grid-template-areas: "mast" "stage" "text" "layers" "ctrl";
       height: auto;
       padding-bottom: 14rem;
     }

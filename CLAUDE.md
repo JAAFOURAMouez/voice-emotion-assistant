@@ -13,7 +13,9 @@ Assistant vocal qui analyse **ce que dit** l'utilisateur (transcription) et **co
 
 ## Contraintes non négociables
 
-- **Tout est gratuit et local.** Aucune API payante, aucune clé API, aucun envoi d'audio ou de texte vers un service externe. Le LLM passe par Ollama (`http://localhost:11434`).
+- **Gratuit et local par défaut.** Par défaut : aucune API payante, aucune clé API, aucun envoi d'audio ou de texte vers un service externe. Le LLM passe par Ollama (`http://localhost:11434`).
+  - Seule exception, à l'initiative de l'utilisateur : il peut choisir dans l'interface un fournisseur compatible OpenAI avec **sa propre clé** (`llm/providers.py`, `llm/selection.py`). Seul le texte part alors chez ce fournisseur, jamais l'audio ni l'historique ; l'interface l'affiche en permanence ; les clés restent dans `data/llm.json` et ne sont jamais renvoyées au navigateur ; `ALLOW_CLOUD_LLM=false` le désactive.
+  - Déploiement : seule l'interface statique peut être hébergée (Render, `render.yaml`) ; le serveur et les données restent sur l'ordinateur de l'utilisateur, joint par un tunnel HTTPS avec `ACCESS_TOKEN` obligatoire.
 - **Vocabulaire prudent.** On parle toujours d'émotion *estimée* ou d'*indices vocaux*, jamais de diagnostic. L'assistant n'est pas un outil médical ni psychologique ; ne jamais lui faire affirmer « vous êtes stressé », plutôt « votre voix semble plus tendue ».
 - **Vie privée.** L'audio brut n'est pas conservé par défaut ; seuls la transcription, les scores d'émotion et l'horodatage sont stockés (SQLite local). La conservation de l'audio est une option désactivée par défaut.
 - **Sécurité de l'utilisateur.** Si la transcription évoque une détresse grave, l'assistant ne propose pas un simple exercice de respiration : il encourage à contacter un proche ou un professionnel (en France : 3114, 15 ou 112 en cas d'urgence). Cette règle vit dans le prompt système et dans un test.
@@ -52,14 +54,17 @@ src/voxemo/
 │   └── fusion.py        # fusion → EmotionEstimate
 ├── llm/
 │   ├── prompts.py       # prompt système + consignes de ton par émotion
-│   └── client.py        # appel Ollama en streaming
+│   ├── client.py        # appel Ollama en streaming, modèles installés
+│   ├── providers.py     # fournisseurs compatibles OpenAI (clé de l'utilisateur, opt-in)
+│   └── selection.py     # modèle choisi dans l'interface, clés stockées localement
 ├── wellbeing/exercises.py  # catalogue d'exercices + règle de déclenchement
 ├── tts/speaker.py       # Piper → audio
 ├── tracking/
 │   ├── store.py         # SQLite : sessions, interactions
 │   └── trends.py        # agrégats et tendances
 ├── pipeline.py          # orchestration d'un tour de conversation
-└── api/                 # FastAPI : app.py (routes), session.py (WebSocket), services.py
+└── api/                 # FastAPI : app.py (routes), session.py (WebSocket), services.py,
+                         # access.py (code d'accès ACCESS_TOKEN)
 web/                     # frontend Svelte : micro (getUserMedia + AudioWorklet 16 kHz),
                          # « empreinte vocale » (Canvas), conversation, frise des strates
 tests/

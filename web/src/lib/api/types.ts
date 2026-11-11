@@ -33,10 +33,14 @@ export interface Exercise {
 export interface LlmState {
   ok: boolean;
   message: string | null;
+  provider?: string;
+  provider_name?: string;
+  model?: string;
+  local?: boolean;
 }
 
 export type ServerMessage =
-  | { type: "status"; state: "loading" | "ready" | "error"; message: string | null; llm: LlmState; voice: boolean; warnings: string[] }
+  | { type: "status"; state: "loading" | "ready" | "error"; message: string | null; llm: LlmState; voice: boolean; warnings: string[]; notice?: string }
   | { type: "recording" }
   | { type: "silence" }
   | { type: "transcript"; text: string; typed: boolean; duration_s?: number }

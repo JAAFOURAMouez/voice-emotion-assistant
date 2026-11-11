@@ -24,7 +24,8 @@ from voxemo.audio.vad import (
 from voxemo.config import Settings
 from voxemo.emotion.classifier import Wav2Vec2EmotionClassifier
 from voxemo.emotion.fusion import EmotionAnalyzer, FusionConfig
-from voxemo.llm.client import ChatModel, Conversation, OllamaChatModel
+from voxemo.llm.client import ChatModel, Conversation
+from voxemo.llm.selection import LlmConfigStore, LlmSelector
 from voxemo.pipeline import VoiceAnalyzer, VoicePipeline
 from voxemo.stt.transcriber import Transcriber, WhisperTranscriber
 from voxemo.tracking.store import InteractionStore
@@ -93,6 +94,18 @@ class Services:
             return None
         return encode_wav(audio, rate)
 
+    @property
+    def selector(self) -> LlmSelector | None:
+        """The switchable model, when the server lets the user choose one."""
+        return self.chat_model if isinstance(self.chat_model, LlmSelector) else None
+
+    def llm_state(self) -> dict:
+        """Current model for the page: provider, name, local or not (no secret)."""
+        if self.selector is not None:
+            return self.selector.state()
+        model = getattr(self.chat_model, "model", "")
+        return {"provider": "ollama", "provider_name": "Ollama", "model": model, "local": True}
+
     def llm_problem(self) -> str | None:
         """User-facing message when the LLM cannot answer right now."""
         check = getattr(self.chat_model, "check", None)
@@ -105,7 +118,7 @@ def build_services(settings: Settings) -> Services:
         settings=settings,
         transcriber=WhisperTranscriber.from_settings(settings),
         analyzer=EmotionAnalyzer(Wav2Vec2EmotionClassifier.from_settings(settings), fusion),
-        chat_model=OllamaChatModel.from_settings(settings),
+        chat_model=LlmSelector(settings, LlmConfigStore(settings.llm_config_path)),
         detector=SileroSpeechDetector(settings.sample_rate),
         store=InteractionStore(settings.db_path),
         speaker=PiperSpeaker.from_settings(settings) if settings.tts_enabled else None,
